@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HA10 Remap</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>HA10 Controller Remap</h1>
+        <span id="device-status">Not connected</span>
+        <div class="actions">
+          <button id="connect">Connect</button>
+          <button id="disconnect" disabled>Disconnect</button>
+          <button id="read" disabled>Read</button>
+          <button id="apply" disabled>Apply</button>
+          <button id="reset" disabled>Reset 1..27</button>
+          <button id="export">Export</button>
+          <button id="import">Import</button>
+        </div>
+      </header>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="visual">Visual</button>
+        <button class="tab" data-tab="mapping">Raw mapping</button>
+      </nav>
+
+      <section id="tab-visual" class="tab-panel active">
+        <p class="hint">
+          Click a button to select it. Shift-click adds to selection. Right-click to rename a button.
+          The side panel lets you set the K-code for selected buttons — set two buttons to the same K
+          to double-bind them. Slots <strong>22–26</strong> are phantom on this device.
+        </p>
+
+        <div class="visual-wrap">
+          <div id="visual-layout"></div>
+          <aside id="visual-side">
+            <h3>Selection</h3>
+            <div id="visual-empty">No button selected. Click one to start.</div>
+            <div id="visual-detail" hidden>
+              <div class="detail-row">
+                <span class="detail-label">Slot(s)</span>
+                <span id="detail-slots"></span>
+              </div>
+              <div class="detail-row" id="detail-label-row" hidden>
+                <span class="detail-label">Label</span>
+                <input type="text" id="detail-label-input" placeholder="(name this button)" />
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Current K</span>
+                <span id="detail-current-role"></span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Default K</span>
+                <span id="detail-default-role"></span>
+              </div>
+              <div class="detail-row detail-input-row">
+                <span class="detail-label">Set K</span>
+                <input type="number" id="detail-role-input" min="0" max="255" />
+                <button id="detail-apply">Set</button>
+              </div>
+              <div class="detail-quick">
+                <button id="detail-reset" class="quick-btn">Reset to default</button>
+                <button id="detail-clear" class="quick-btn">Clear selection</button>
+              </div>
+              <hr />
+              <h4>Bind to same as…</h4>
+              <p class="hint">Pick a target button to copy its K onto every selected button.</p>
+              <select id="detail-copy-from">
+                <option value="">(choose source)</option>
+              </select>
+              <button id="detail-copy-apply">Copy K</button>
+            </div>
+            <hr />
+            <h4>Legend</h4>
+            <ul class="legend">
+              <li><span class="dot dot-default"></span> Default K</li>
+              <li><span class="dot dot-modified"></span> Modified</li>
+              <li><span class="dot dot-duplicate"></span> Duplicated (double-bound)</li>
+            </ul>
+          </aside>
+        </div>
+      </section>
+
+      <section id="tab-mapping" class="tab-panel" hidden>
+        <h2>Mapping table — 27 slots</h2>
+        <p class="hint">
+          Each slot holds a <em>K-code</em>. Duplicates are highlighted in yellow.
+          Slots without a button label are phantom (no physical button on the device).
+        </p>
+        <table id="slots">
+          <thead>
+            <tr>
+              <th class="col-i">Slot</th>
+              <th class="col-label">Label</th>
+              <th class="col-value">Role ID</th>
+              <th class="col-hex">Hex</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <div class="two-col">
+        <section>
+          <h2>HID log</h2>
+          <pre id="log"></pre>
+        </section>
+        <section>
+          <h2>Raw input reports</h2>
+          <pre id="input-test-log">(waiting…)</pre>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
