@@ -266,9 +266,35 @@ h4 {
   font: inherit;
 }
 
-#visual-side #detail-copy-apply {
+#visual-side #detail-copy-apply,
+#visual-side #detail-pick-kcode-apply {
   margin-top: 6px;
   width: 100%;
+}
+
+#visual-side details.detail-advanced {
+  margin-top: 12px;
+  border-top: 1px solid #2a2a30;
+  padding-top: 8px;
+}
+
+#visual-side details.detail-advanced summary {
+  cursor: pointer;
+  font-size: 11px;
+  opacity: 0.55;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+#visual-side details.detail-advanced[open] summary { opacity: 0.8; }
+
+.vbtn-name {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0 2px;
+  word-break: break-word;
 }
 
 .legend {
@@ -320,10 +346,12 @@ th {
   letter-spacing: 0.06em;
 }
 
-.col-i { width: 50px; opacity: 0.5; }
+.col-i { width: 60px; opacity: 0.5; }
 .col-label { width: 280px; }
 .col-value { width: 100px; }
 .col-hex { width: 60px; opacity: 0.5; font-size: 11px; }
+.col-binding { color: #6ee7b7; font-size: 12px; }
+.col-where { opacity: 0.55; font-size: 11px; }
 
 input {
   background: #16161a;

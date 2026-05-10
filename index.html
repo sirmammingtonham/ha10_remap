@@ -25,14 +25,16 @@
 
       <nav class="tabs">
         <button class="tab active" data-tab="visual">Visual</button>
+        <button class="tab" data-tab="kcodes">K-codes</button>
         <button class="tab" data-tab="mapping">Raw mapping</button>
       </nav>
 
       <section id="tab-visual" class="tab-panel active">
         <p class="hint">
-          Click a button to select it. Shift-click adds to selection. Right-click to rename a button.
-          The side panel lets you set the K-code for selected buttons — set two buttons to the same K
-          to double-bind them. Slots <strong>22–26</strong> are phantom on this device.
+          Click a button to select it. Shift-click adds to selection. Right-click to name the K-code
+          this button currently fires (e.g., "Square", "L1") — that name will appear on every button
+          bound to the same K. Double binds are buggy in the current firmware, but you can use the stick
+          inputs to effectively double bind a movement key.
         </p>
 
         <div class="visual-wrap">
@@ -42,37 +44,45 @@
             <div id="visual-empty">No button selected. Click one to start.</div>
             <div id="visual-detail" hidden>
               <div class="detail-row">
-                <span class="detail-label">Slot(s)</span>
+                <span class="detail-label">Selection</span>
                 <span id="detail-slots"></span>
               </div>
-              <div class="detail-row" id="detail-label-row" hidden>
-                <span class="detail-label">Label</span>
-                <input type="text" id="detail-label-input" placeholder="(name this button)" />
-              </div>
               <div class="detail-row">
-                <span class="detail-label">Current K</span>
+                <span class="detail-label">Current</span>
                 <span id="detail-current-role"></span>
               </div>
+              <div class="detail-row" id="detail-kname-row" hidden>
+                <span class="detail-label" id="detail-kname-label">Rename K</span>
+                <input type="text" id="detail-kname-input" placeholder="(name this K-code)" />
+              </div>
               <div class="detail-row">
-                <span class="detail-label">Default K</span>
+                <span class="detail-label">Default</span>
                 <span id="detail-default-role"></span>
               </div>
-              <div class="detail-row detail-input-row">
-                <span class="detail-label">Set K</span>
-                <input type="number" id="detail-role-input" min="0" max="255" />
-                <button id="detail-apply">Set</button>
-              </div>
+              <hr />
+              <h4>Set binding</h4>
+              <p class="hint">Pick from named K-codes to assign the input.</p>
+              <select id="detail-pick-kcode"></select>
+              <button id="detail-pick-kcode-apply">Apply</button>
+              <details class="detail-advanced">
+                <summary>Advanced</summary>
+                <div class="detail-row detail-input-row">
+                  <span class="detail-label">Set K#</span>
+                  <input type="number" id="detail-role-input" min="0" max="255" />
+                  <button id="detail-apply">Set</button>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Copy from</span>
+                  <select id="detail-copy-from">
+                    <option value="">(choose source)</option>
+                  </select>
+                  <button id="detail-copy-apply">Copy</button>
+                </div>
+              </details>
               <div class="detail-quick">
                 <button id="detail-reset" class="quick-btn">Reset to default</button>
                 <button id="detail-clear" class="quick-btn">Clear selection</button>
               </div>
-              <hr />
-              <h4>Bind to same as…</h4>
-              <p class="hint">Pick a target button to copy its K onto every selected button.</p>
-              <select id="detail-copy-from">
-                <option value="">(choose source)</option>
-              </select>
-              <button id="detail-copy-apply">Copy K</button>
             </div>
             <hr />
             <h4>Legend</h4>
@@ -85,19 +95,39 @@
         </div>
       </section>
 
-      <section id="tab-mapping" class="tab-panel" hidden>
-        <h2>Mapping table — 27 slots</h2>
+      <section id="tab-kcodes" class="tab-panel" hidden>
+        <h2>K-codes — 27 inputs</h2>
         <p class="hint">
-          Each slot holds a <em>K-code</em>. Duplicates are highlighted in yellow.
-          Slots without a button label are phantom (no physical button on the device).
+          Name each K-code with the input it produces (e.g. "Square", "L1", "Up"). The name
+          shows on every button bound to that K. To find what a K-code does, set a single
+          button to it, click <strong>Apply</strong>, then press the button while watching a
+          gamepad tester.
+        </p>
+        <table id="kcodes">
+          <thead>
+            <tr>
+              <th class="col-i">K-code</th>
+              <th class="col-label">Name</th>
+              <th class="col-where">Bound to slot(s)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section id="tab-mapping" class="tab-panel" hidden>
+        <h2>Raw mapping — 27 slots</h2>
+        <p class="hint">
+          Each slot holds a K-code. Duplicates are highlighted in yellow. Edit the value
+          directly to write any byte (0–255). Slots <strong>22–26</strong> are phantom.
         </p>
         <table id="slots">
           <thead>
             <tr>
               <th class="col-i">Slot</th>
-              <th class="col-label">Label</th>
-              <th class="col-value">Role ID</th>
+              <th class="col-value">K-code</th>
               <th class="col-hex">Hex</th>
+              <th class="col-binding">Binding</th>
             </tr>
           </thead>
           <tbody></tbody>

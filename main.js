@@ -52,7 +52,8 @@ const BUTTONS = [
   { slot: 21, x: 704, y: 210, w: 52, group: "top" },
 ];
 
-const slotName = (slot) => state.slots[slot]?.label || `slot ${slot}`;
+// Returns the human-readable name for a K-code. Falls back to "Kn" when unnamed.
+const kcodeName = (k) => state.kcodeNames[k] || `K${k}`;
 
 // Layout bounding box derived from BUTTONS.
 const VIS_BB = (() => {
@@ -73,9 +74,37 @@ const PHANTOM_SLOTS = (() => {
   return Array.from({ length: NUM_SLOTS }, (_, i) => i).filter((i) => !known.has(i));
 })();
 
-const LABEL_KEY = "ha10-remap-labels-v1";
+const KCODE_NAMES_KEY = "ha10-kcode-names-v1";
 const MAX_LOG_LINES = 200;
 const MAX_INPUT_LINES = 30;
+
+// Default K-code names — empirically discovered for the HA10 in keyboard-mode
+// behaviour as of 2026-05. K1, K3, K18, K21, K23 were not identified and are
+// left unnamed; users can fill them in via right-click or the K-codes tab.
+const DEFAULT_KCODE_NAMES = {
+  2: "SELECT",
+  4: "LEFT",
+  5: "DOWN",
+  6: "RIGHT",
+  7: "X",
+  8: "Y",
+  9: "RB",
+  10: "LB",
+  11: "A",
+  12: "B",
+  13: "RT",
+  14: "LT",
+  15: "LS",
+  16: "UP",
+  17: "RS",
+  19: "START",
+  20: "GUIDE",
+  22: "UPDATE",
+  24: "S UP",
+  25: "S RIGHT",
+  26: "S DOWN",
+  27: "S LEFT",
+};
 
 const $ = (sel) => document.querySelector(sel);
 const els = {
@@ -99,8 +128,9 @@ const els = {
   visEmpty: $("#visual-empty"),
   visDetail: $("#visual-detail"),
   detailSlots: $("#detail-slots"),
-  detailLabelRow: $("#detail-label-row"),
-  detailLabelInput: $("#detail-label-input"),
+  detailKnameRow: $("#detail-kname-row"),
+  detailKnameLabel: $("#detail-kname-label"),
+  detailKnameInput: $("#detail-kname-input"),
   detailCurrentRole: $("#detail-current-role"),
   detailDefaultRole: $("#detail-default-role"),
   detailRoleInput: $("#detail-role-input"),
@@ -109,12 +139,18 @@ const els = {
   detailClear: $("#detail-clear"),
   detailCopyFrom: $("#detail-copy-from"),
   detailCopyApply: $("#detail-copy-apply"),
+  detailPickKcode: $("#detail-pick-kcode"),
+  detailPickKcodeApply: $("#detail-pick-kcode-apply"),
+
+  kcodesBody: $("#kcodes tbody"),
 };
 
 let device = null;
 const state = {
-  slots: Array.from({ length: NUM_SLOTS }, (_, i) => ({ label: "", value: i + 1 })),
-  selectedSlots: new Set(), // slot indices currently selected on the visual layout
+  slots: Array.from({ length: NUM_SLOTS }, (_, i) => ({ value: i + 1 })),
+  // K-code → human-readable name (the "real input" produced when this K-code fires).
+  kcodeNames: {},
+  selectedSlots: new Set(),
 };
 
 const hex = (data) => {
@@ -136,17 +172,32 @@ function logInput(line) {
   els.inputLog.textContent = `[${ts()}] ${line}\n` + existing;
 }
 
-function loadLabels() {
+function loadKcodeNames() {
+  // Defaults seed every load; localStorage entries override per-K-code so that
+  // users keep their renames while still picking up new defaults for K-codes
+  // they haven't customized.
+  const merged = { ...DEFAULT_KCODE_NAMES };
   try {
-    const labels = JSON.parse(localStorage.getItem(LABEL_KEY) || "[]");
-    labels.forEach((l, i) => {
-      if (state.slots[i]) state.slots[i].label = l || "";
-    });
+    const raw = localStorage.getItem(KCODE_NAMES_KEY);
+    if (raw != null) {
+      const data = JSON.parse(raw);
+      if (data && typeof data === "object") {
+        for (const [k, v] of Object.entries(data)) {
+          if (typeof v === "string" && v.length > 0) {
+            merged[k] = v;
+          } else if (v === "" || v === null) {
+            // Explicit clear by the user — drop the default too.
+            delete merged[k];
+          }
+        }
+      }
+    }
   } catch {}
+  state.kcodeNames = merged;
 }
 
-function saveLabels() {
-  localStorage.setItem(LABEL_KEY, JSON.stringify(state.slots.map((s) => s.label)));
+function saveKcodeNames() {
+  localStorage.setItem(KCODE_NAMES_KEY, JSON.stringify(state.kcodeNames));
 }
 
 // Returns map: roleId → count.
@@ -160,13 +211,12 @@ function renderSlots() {
   const counts = roleCounts();
   const rows = state.slots.map((slot, i) => {
     const isDup = counts.get(slot.value) > 1;
-    const labelEsc = slot.label.replace(/"/g, "&quot;");
     return `
       <tr class="${isDup ? "duplicate" : ""}">
         <td class="col-i">${i}</td>
-        <td class="col-label"><input type="text" data-i="${i}" data-field="label" value="${labelEsc}" placeholder="(unlabeled)" /></td>
         <td class="col-value"><input type="number" data-i="${i}" data-field="value" min="0" max="255" value="${slot.value}" /></td>
         <td class="col-hex">0x${slot.value.toString(16).padStart(2, "0")}</td>
+        <td class="col-binding">${kcodeName(slot.value)}</td>
       </tr>`;
   });
   els.slotsBody.innerHTML = rows.join("");
@@ -179,10 +229,7 @@ function onSlotInput(e) {
   const field = t.dataset.field;
   if (Number.isNaN(i) || !state.slots[i]) return;
 
-  if (field === "label") {
-    state.slots[i].label = t.value;
-    saveLabels();
-  } else if (field === "value") {
+  if (field === "value") {
     const v = Math.max(0, Math.min(255, parseInt(t.value, 10) || 0));
     state.slots[i].value = v;
     const activeIdx = i;
@@ -220,14 +267,15 @@ function renderVisual() {
     const left = b.x - VIS_BB.minX + padding;
     const top = b.y - VIS_BB.minY + padding;
 
-    const name = slotName(b.slot);
+    const name = kcodeName(slot.value);
+    const isNamed = !!state.kcodeNames[slot.value];
     return `
       <button class="vbtn vbtn-${b.group} vbtn-${kind} ${isSelected ? "vbtn-selected" : ""}"
               data-slot="${b.slot}"
               style="left: ${left}px; top: ${top}px; width: ${b.w}px; height: ${b.w}px"
-              title="slot ${b.slot} (${name}) — K${slot.value}">
+              title="slot ${b.slot} → ${name} (K${slot.value})">
         <span class="vbtn-name">${name}</span>
-        <span class="vbtn-meta">K${slot.value}</span>
+        ${isNamed ? `<span class="vbtn-meta">K${slot.value}</span>` : ""}
       </button>`;
   }).join("");
 
@@ -245,23 +293,26 @@ function renderVisualSidePanel() {
   els.visEmpty.hidden = true;
   els.visDetail.hidden = false;
 
-  const named = slots.map((s) => `${s} (${slotName(s)})`);
+  const named = slots.map((s) => `${s} → ${kcodeName(state.slots[s].value)}`);
   els.detailSlots.textContent = named.join(", ");
-
-  // Show inline label editor when exactly one slot is selected.
-  if (slots.length === 1) {
-    els.detailLabelRow.hidden = false;
-    els.detailLabelInput.value = state.slots[slots[0]].label || "";
-  } else {
-    els.detailLabelRow.hidden = true;
-  }
 
   const values = slots.map((s) => state.slots[s].value);
   const distinct = [...new Set(values)];
+
+  // Inline rename of the K-code, when all selected buttons share the same K-code.
+  if (distinct.length === 1) {
+    els.detailKnameRow.hidden = false;
+    els.detailKnameLabel.textContent = `Rename K${distinct[0]}`;
+    els.detailKnameInput.value = state.kcodeNames[distinct[0]] || "";
+    els.detailKnameInput.dataset.kcode = String(distinct[0]);
+  } else {
+    els.detailKnameRow.hidden = true;
+  }
+
   els.detailCurrentRole.textContent =
     distinct.length === 1
-      ? `K${distinct[0]} (0x${distinct[0].toString(16).padStart(2, "0")})`
-      : `mixed: ${distinct.map((v) => `K${v}`).join(", ")}`;
+      ? `${kcodeName(distinct[0])} (K${distinct[0]}, 0x${distinct[0].toString(16).padStart(2, "0")})`
+      : `mixed: ${distinct.map((v) => kcodeName(v)).join(", ")}`;
 
   const defaults = slots.map((s) => `K${s + 1}`);
   els.detailDefaultRole.textContent = defaults.join(", ");
@@ -272,6 +323,29 @@ function renderVisualSidePanel() {
     els.detailRoleInput.value = "";
     els.detailRoleInput.placeholder = "(mixed)";
   }
+
+  renderPickKcodeOptions();
+}
+
+function renderPickKcodeOptions() {
+  const opts = ['<option value="">(pick a K-code)</option>'];
+  for (let k = 1; k <= NUM_SLOTS; k++) {
+    const name = state.kcodeNames[k];
+    opts.push(`<option value="${k}">${name ? `${name} — K${k}` : `K${k}`}</option>`);
+  }
+  // Include any custom-named K-codes outside 1..27.
+  Object.keys(state.kcodeNames)
+    .map(Number)
+    .filter((k) => !Number.isNaN(k) && (k < 1 || k > NUM_SLOTS))
+    .sort((a, b) => a - b)
+    .forEach((k) => {
+      opts.push(`<option value="${k}">${state.kcodeNames[k]} — K${k}</option>`);
+    });
+  if (els.detailPickKcode) {
+    const cur = els.detailPickKcode.value;
+    els.detailPickKcode.innerHTML = opts.join("");
+    if (cur) els.detailPickKcode.value = cur;
+  }
 }
 
 function renderCopyFromOptions() {
@@ -279,7 +353,7 @@ function renderCopyFromOptions() {
   BUTTONS.forEach((b) => {
     const slot = state.slots[b.slot];
     opts.push(
-      `<option value="${b.slot}">${slotName(b.slot)} — slot ${b.slot}, K${slot.value}</option>`,
+      `<option value="${b.slot}">slot ${b.slot} → ${kcodeName(slot.value)} (K${slot.value})</option>`,
     );
   });
   const cur = els.detailCopyFrom.value;
@@ -562,11 +636,11 @@ function resetSlots() {
 
 function exportLayout() {
   const data = {
-    version: 1,
+    version: 2,
     device: "HA10",
     exportedAt: new Date().toISOString(),
     values: state.slots.map((s) => s.value),
-    labels: state.slots.map((s) => s.label),
+    kcodeNames: state.kcodeNames,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -601,14 +675,19 @@ function importLayout() {
         }
         state.slots[i].value = n;
       });
-      if (Array.isArray(data.labels)) {
-        data.labels.forEach((l, i) => {
-          if (state.slots[i]) state.slots[i].label = typeof l === "string" ? l : "";
-        });
-        saveLabels();
+      if (data.kcodeNames && typeof data.kcodeNames === "object") {
+        // Replace, don't merge — imports represent a complete naming scheme.
+        state.kcodeNames = {};
+        for (const [k, name] of Object.entries(data.kcodeNames)) {
+          if (typeof name === "string" && name.trim()) {
+            state.kcodeNames[k] = name;
+          }
+        }
+        saveKcodeNames();
       }
       renderVisual();
       renderSlots();
+      renderKcodes();
       log(`imported layout from ${file.name}`);
     } catch (err) {
       log("import failed: " + err.message);
@@ -616,6 +695,32 @@ function importLayout() {
     }
   });
   input.click();
+}
+
+// === K-codes tab ===
+
+function renderKcodes() {
+  if (!els.kcodesBody) return;
+  // Compute slot usage per K-code for the "Bound to" column.
+  const usage = new Map();
+  state.slots.forEach((s, i) => {
+    if (!usage.has(s.value)) usage.set(s.value, []);
+    usage.get(s.value).push(i);
+  });
+
+  const rows = [];
+  for (let k = 1; k <= NUM_SLOTS; k++) {
+    const slots = usage.get(k) || [];
+    const slotsTxt = slots.length ? slots.join(", ") : "(unused)";
+    const name = state.kcodeNames[k] || "";
+    rows.push(`
+      <tr>
+        <td class="col-i">K${k}</td>
+        <td class="col-label"><input type="text" data-kcode="${k}" value="${name.replace(/"/g, "&quot;")}" placeholder="(name this K-code)" /></td>
+        <td class="col-where">${slotsTxt}</td>
+      </tr>`);
+  }
+  els.kcodesBody.innerHTML = rows.join("");
 }
 
 // === Tabs ===
@@ -644,20 +749,57 @@ els.reset.addEventListener("click", resetSlots);
 els.exportBtn.addEventListener("click", exportLayout);
 els.importBtn.addEventListener("click", importLayout);
 els.slotsBody.addEventListener("input", onSlotInput);
+
+// K-codes tab: rename a K-code by typing its name.
+if (els.kcodesBody) {
+  els.kcodesBody.addEventListener("input", (e) => {
+    const t = e.target;
+    if (!t.matches("input[data-kcode]")) return;
+    const k = parseInt(t.dataset.kcode, 10);
+    if (Number.isNaN(k)) return;
+    const name = t.value.trim();
+    if (!name) {
+      // Explicit empty marks the entry as cleared so the default (if any) is
+      // suppressed on next load. kcodeName() treats "" as unnamed for display.
+      state.kcodeNames[k] = "";
+    } else {
+      state.kcodeNames[k] = name;
+    }
+    saveKcodeNames();
+    renderVisual();
+    renderSlots();
+    renderCopyFromOptions();
+    renderPickKcodeOptions();
+  });
+}
 els.visLayout.addEventListener("click", onVisualClick);
 els.visLayout.addEventListener("contextmenu", (e) => {
   const btn = e.target.closest(".vbtn");
   if (!btn) return;
   e.preventDefault();
   const slot = +btn.dataset.slot;
-  const current = state.slots[slot].label || "";
-  const next = window.prompt(`Rename slot ${slot}:`, current);
+  const k = state.slots[slot].value;
+  const current = state.kcodeNames[k] || "";
+  const next = window.prompt(
+    `Name K${k} (the input this button currently fires).\n` +
+      `This name will appear on every button bound to K${k}.`,
+    current,
+  );
   if (next === null) return;
-  state.slots[slot].label = next;
-  saveLabels();
+  setKcodeName(k, next.trim());
+});
+
+function setKcodeName(k, name) {
+  if (!name) {
+    delete state.kcodeNames[k];
+  } else {
+    state.kcodeNames[k] = name;
+  }
+  saveKcodeNames();
   renderVisual();
   renderSlots();
-});
+  renderKcodes();
+}
 
 // Watch for plug/unplug while the page is open.
 if (navigator.hid) {
@@ -701,20 +843,42 @@ els.detailCopyApply.addEventListener("click", () => {
   copyRoleFromTarget(+v);
 });
 
-els.detailLabelInput.addEventListener("input", (e) => {
-  const slots = Array.from(state.selectedSlots);
-  if (slots.length !== 1) return;
-  state.slots[slots[0]].label = e.target.value;
-  saveLabels();
-  // Update the visible button name without rebuilding the whole layout (which would
-  // steal focus from the input).
-  const btn = els.visLayout.querySelector(`.vbtn[data-slot="${slots[0]}"] .vbtn-name`);
-  if (btn) btn.textContent = e.target.value || `slot ${slots[0]}`;
+// Inline K-code rename (in side panel, when all selected buttons share one K-code).
+els.detailKnameInput.addEventListener("input", (e) => {
+  const k = parseInt(e.target.dataset.kcode, 10);
+  if (Number.isNaN(k)) return;
+  const name = e.target.value.trim();
+  if (!name) {
+    delete state.kcodeNames[k];
+  } else {
+    state.kcodeNames[k] = name;
+  }
+  saveKcodeNames();
+  // Rerender buttons in place to avoid stealing focus from the input.
+  els.visLayout.querySelectorAll(".vbtn").forEach((btn) => {
+    const slot = +btn.dataset.slot;
+    if (state.slots[slot].value === k) {
+      const nameSpan = btn.querySelector(".vbtn-name");
+      if (nameSpan) nameSpan.textContent = kcodeName(k);
+    }
+  });
   renderSlots();
   renderCopyFromOptions();
+  renderKcodes();
 });
 
-loadLabels();
+// Pick-K-code dropdown apply.
+els.detailPickKcode.addEventListener("change", (e) => {
+  // No-op on change; user must click Apply to commit.
+});
+els.detailPickKcodeApply.addEventListener("click", () => {
+  const v = els.detailPickKcode.value;
+  if (v === "") return;
+  applySelectionRole(v);
+});
+
+loadKcodeNames();
 renderSlots();
 renderVisual();
+renderKcodes();
 tryAutoReconnect();
