@@ -81,6 +81,7 @@ const $ = (sel) => document.querySelector(sel);
 const els = {
   connect: $("#connect"),
   disconnect: $("#disconnect"),
+  forget: $("#forget"),
   read: $("#read"),
   apply: $("#apply"),
   reset: $("#reset"),
@@ -324,8 +325,38 @@ function copyRoleFromTarget(targetSlotIdx) {
 
 // === Device communication ===
 
+// macOS WebHID is flaky: open() often rejects on the first attempt even when no
+// other process holds the device, then succeeds on a retry. Retry with backoff
+// so the user doesn't see spurious failures.
+async function openWithRetry(d, attempts = 3) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      if (d.opened) return;
+      await d.open();
+      if (i > 0) log(`open() succeeded on attempt ${i + 1}`);
+      return;
+    } catch (e) {
+      lastErr = e;
+      log(`open() attempt ${i + 1}/${attempts} failed: ${e.message}`);
+      if (i < attempts - 1) {
+        const delay = 250 * (i + 1);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+function describeCollections(d) {
+  return d.collections
+    .map((c) => `usagePage=0x${c.usagePage.toString(16).padStart(4, "0")} usage=0x${c.usage.toString(16).padStart(2, "0")}`)
+    .join(" | ");
+}
+
 async function tryUseDevice(d) {
-  if (!d.opened) await d.open();
+  log(`device collections (${d.collections.length}): ${describeCollections(d)}`);
+  await openWithRetry(d);
   device = d;
   device.addEventListener("inputreport", onInputReport);
   setStatus(
@@ -334,6 +365,7 @@ async function tryUseDevice(d) {
   );
   els.connect.disabled = true;
   els.disconnect.disabled = false;
+  els.forget.disabled = false;
   els.read.disabled = false;
   els.apply.disabled = false;
   els.reset.disabled = false;
@@ -347,9 +379,21 @@ async function connect() {
     return;
   }
   try {
-    const devices = await navigator.hid.requestDevice({
-      filters: [{ vendorId: VID, productId: PID }],
+    // Try the vendor-defined collection first. Chrome refuses to open() a device
+    // when any granted collection is "protected" (keyboard usage 0x01:0x06,
+    // mouse usage 0x01:0x02, etc.) — a broad VID/PID-only pairing would grant
+    // access to the keyboard interface and break open(). Filtering by usagePage
+    // restricts the grant to non-protected collections.
+    log("requesting device with usagePage=0xFF00 filter");
+    let devices = await navigator.hid.requestDevice({
+      filters: [{ vendorId: VID, productId: PID, usagePage: 0xff00 }],
     });
+    if (devices.length === 0) {
+      log("no device matched 0xFF00; retrying with broad VID/PID filter");
+      devices = await navigator.hid.requestDevice({
+        filters: [{ vendorId: VID, productId: PID }],
+      });
+    }
     if (devices.length === 0) {
       log("no device selected");
       return;
@@ -361,11 +405,11 @@ async function connect() {
 }
 
 function handleOpenError(e) {
-  log("connect failed: " + e.message);
+  log("connect failed after retries: " + e.message);
   let suggestion = "";
   if (/open|access|busy/i.test(e.message)) {
     suggestion =
-      " — likely the device is held by another tab. Close any open Varmilo configurator (fk2.varmilo.com) tab and click Connect again.";
+      " — try: (1) click Forget then Connect to fully re-pair, (2) close any other Varmilo tab, or (3) unplug + replug the controller.";
   }
   setStatus("Connect failed: " + e.message + suggestion, "error");
 }
@@ -382,10 +426,46 @@ async function disconnect() {
   setStatus("Disconnected", "");
   els.connect.disabled = false;
   els.disconnect.disabled = true;
+  els.forget.disabled = true;
   els.read.disabled = true;
   els.apply.disabled = true;
   els.reset.disabled = true;
   log("disconnected");
+}
+
+// Revoke the WebHID permission for this device on this origin. Useful when the
+// permission state is wedged (paired but open() keeps failing).
+async function forget() {
+  if (!navigator.hid) return;
+  try {
+    // Forget the currently-attached device if there is one.
+    if (device?.forget) {
+      await device.forget();
+      log("device.forget() called on attached device");
+    }
+    // Also forget any other paired matching devices.
+    const devices = await navigator.hid.getDevices();
+    for (const d of devices) {
+      if (d.vendorId === VID && d.productId === PID && d.forget) {
+        try {
+          await d.forget();
+          log(`device.forget() called on paired ${d.productName || ""}`);
+        } catch (e) {
+          log("forget() failed for one device: " + e.message);
+        }
+      }
+    }
+  } catch (e) {
+    log("forget() error: " + e.message);
+  }
+  device = null;
+  setStatus("Forgotten — click Connect to re-pair", "");
+  els.connect.disabled = false;
+  els.disconnect.disabled = true;
+  els.forget.disabled = true;
+  els.read.disabled = true;
+  els.apply.disabled = true;
+  els.reset.disabled = true;
 }
 
 // On page load, try to silently re-attach to a previously-paired device.
@@ -409,6 +489,8 @@ async function tryAutoReconnect() {
       );
       return;
     }
+    // The device is paired — enable Forget even if open() fails below.
+    els.forget.disabled = false;
     log("auto-reconnect: HA10 in paired list, attempting open()");
     await tryUseDevice(ha10);
   } catch (e) {
@@ -555,6 +637,7 @@ els.tabs.forEach((t) => {
 
 els.connect.addEventListener("click", connect);
 els.disconnect.addEventListener("click", disconnect);
+els.forget.addEventListener("click", forget);
 els.read.addEventListener("click", readMapping);
 els.apply.addEventListener("click", applyMapping);
 els.reset.addEventListener("click", resetSlots);
